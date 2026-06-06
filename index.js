@@ -8,13 +8,9 @@ app.use(express.json());
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-// Histórico de conversa por número (memória simples em memória RAM)
 const conversas = {};
-
-// Mapa de conversas no Chatwoot: número → conversation_id
 const chatwootConversas = {};
 
-// Configurações Chatwoot
 const CHATWOOT_URL = 'https://app.chatwoot.com';
 const CHATWOOT_ACCOUNT_ID = process.env.CHATWOOT_ACCOUNT_ID;
 const CHATWOOT_INBOX_ID = process.env.CHATWOOT_INBOX_ID;
@@ -26,7 +22,6 @@ async function chatwootEnviarMensagem(numeroWA, texto, tipo = 'outgoing') {
     let conversationId = chatwootConversas[numeroWA];
 
     if (!conversationId) {
-      // Cria ou busca contato
       const contatoRes = await axios.post(
         `${CHATWOOT_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/contacts`,
         { phone_number: '+' + numeroWA, name: numeroWA },
@@ -34,7 +29,6 @@ async function chatwootEnviarMensagem(numeroWA, texto, tipo = 'outgoing') {
       );
       const contactId = contatoRes.data.id;
 
-      // Cria conversa
       const convRes = await axios.post(
         `${CHATWOOT_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/contacts/${contactId}/conversations`,
         { inbox_id: CHATWOOT_INBOX_ID },
@@ -44,7 +38,6 @@ async function chatwootEnviarMensagem(numeroWA, texto, tipo = 'outgoing') {
       chatwootConversas[numeroWA] = conversationId;
     }
 
-    // Envia mensagem na conversa
     await axios.post(
       `${CHATWOOT_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}/messages`,
       { content: texto, message_type: tipo, private: false },
@@ -140,7 +133,6 @@ REGRAS:
 - Sempre confirme o endereço antes de finalizar o pedido
 - Se houver dúvida muito complexa ou reclamação, diga: "Vou chamar nosso especialista para te ajudar melhor!" e pare de responder (Bruno assume)`;
 
-// Verificação do webhook pelo Meta
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
@@ -154,9 +146,8 @@ app.get('/webhook', (req, res) => {
   }
 });
 
-// Recebe mensagens do WhatsApp
 app.post('/webhook', async (req, res) => {
-  res.sendStatus(200); // Responde imediatamente ao Meta
+  res.sendStatus(200);
 
   try {
     const entry = req.body.entry?.[0];
@@ -167,30 +158,23 @@ app.post('/webhook', async (req, res) => {
     if (!messages || messages.length === 0) return;
 
     const msg = messages[0];
-    const from = msg.from; // número do lead
+    const from = msg.from;
     const texto = msg.text?.body;
 
     if (!texto) return;
 
     console.log(`Mensagem de ${from}: ${texto}`);
 
-    // Espelha mensagem do cliente no Chatwoot
     await chatwootEnviarMensagem(from, texto, 'incoming');
 
-    // Inicializa histórico se não existir
-    if (!conversas[from]) {
-      conversas[from] = [];
-    }
+    if (!conversas[from]) conversas[from] = [];
 
-    // Adiciona mensagem do lead ao histórico
     conversas[from].push({ role: 'user', content: texto });
 
-    // Mantém apenas as últimas 20 mensagens para não estourar tokens
     if (conversas[from].length > 20) {
       conversas[from] = conversas[from].slice(-20);
     }
 
-    // Envia para Claude
     const response = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 300,
@@ -200,18 +184,13 @@ app.post('/webhook', async (req, res) => {
 
     const resposta = response.content[0].text;
 
-    // Adiciona resposta do agente ao histórico
     conversas[from].push({ role: 'assistant', content: resposta });
 
-    // Se o agente escalar para Bruno, para de responder automaticamente
     if (resposta.includes('especialista')) {
       console.log(`Lead ${from} escalado para Bruno`);
     }
 
-    // Envia resposta pelo WhatsApp
     await enviarMensagem(from, resposta);
-
-    // Espelha resposta do agente no Chatwoot
     await chatwootEnviarMensagem(from, '🤖 ' + resposta, 'outgoing');
 
   } catch (err) {
@@ -219,27 +198,6 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
-async function enviarMensagem(para, texto) {
-  await axios.post(
-    `https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`,
-    {
-      messaging_product: 'whatsapp',
-      to: para,
-      type: 'text',
-      text: { body: texto },
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
-        'Content-Type': 'application/json',
-      },
-    }
-  );
-}
-
-// =============================================
-// LOGZZ WEBHOOK — Notificações de status do pedido
-// =============================================
 app.post('/logzz', async (req, res) => {
   res.sendStatus(200);
 
@@ -247,7 +205,6 @@ app.post('/logzz', async (req, res) => {
     const dados = req.body;
     console.log('Logzz webhook recebido:', JSON.stringify(dados));
 
-    // Campos exatos da documentação Logzz
     const telefone = dados.client_phone;
     const status = dados.order_status;
     const nome = dados.client_name || 'cliente';
@@ -257,7 +214,6 @@ app.post('/logzz', async (req, res) => {
       return;
     }
 
-    // Formata número para WhatsApp (somente dígitos, com 55 na frente)
     const numeroLimpo = telefone.replace(/\D/g, '');
     const numeroWA = numeroLimpo.startsWith('55') ? numeroLimpo : '55' + numeroLimpo;
 
@@ -279,48 +235,56 @@ function gerarMensagemStatus(status, nome) {
   const s = status.toLowerCase();
   const primeiroNome = nome.split(' ')[0];
 
-  // Status exatos da Logzz
   if (s === 'confirmado') {
     return `✅ Olá, ${primeiroNome}! Seu pedido do Sérum NovaBeauty foi *confirmado* e já está sendo preparado para envio. Em breve você receberá mais atualizações. 💚`;
   }
-
   if (s === 'em separação') {
     return `📦 ${primeiroNome}, seu Sérum NovaBeauty está sendo *separado no estoque* para envio. Logo logo sai pra você! 💚`;
   }
-
   if (s === 'a enviar' || s === 'enviando') {
     return `🚀 ${primeiroNome}, seu Sérum NovaBeauty está *a caminho*! Em breve o entregador estará na sua porta. Lembre-se: pagamento na entrega. 😊`;
   }
-
   if (s === 'enviado' || s === 'em rota' || s === 'a caminho') {
     return `🚚 ${primeiroNome}, seu Sérum NovaBeauty *saiu para entrega hoje*! Fique de olho, o entregador passará em breve. Pagamento só na entrega. 😊`;
   }
-
   if (s === 'completo') {
     return `🎉 ${primeiroNome}, seu Sérum NovaBeauty foi *entregue com sucesso*! Esperamos que você ame os resultados. Qualquer dúvida sobre como usar, é só chamar aqui. ✨`;
   }
-
   if (s === 'cancelado') {
     return `⚠️ ${primeiroNome}, infelizmente seu pedido foi *cancelado*. Se quiser fazer um novo pedido ou tiver alguma dúvida, é só falar aqui com a gente! 💚`;
   }
-
   if (s === 'frustrado') {
     return `😕 ${primeiroNome}, não conseguimos realizar a entrega do seu pedido. Entre em contato para reagendarmos! 💚`;
   }
-
   if (s === 'reagendado' || s === 'a reagendar') {
     return `📅 ${primeiroNome}, sua entrega foi *reagendada*. Fique atenta, o entregador voltará em breve! 💚`;
   }
-
   if (s === 'atrasado') {
     return `⏰ ${primeiroNome}, seu pedido está com um pequeno *atraso*, mas já está a caminho! Pedimos desculpas pela demora. 💚`;
   }
-
   if (s === 'reembolsado') {
     return `↩️ ${primeiroNome}, o *reembolso* do seu pedido foi processado. Qualquer dúvida, estamos aqui! 💚`;
   }
 
-  return null; // Status sem mensagem configurada
+  return null;
+}
+
+async function enviarMensagem(para, texto) {
+  await axios.post(
+    `https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`,
+    {
+      messaging_product: 'whatsapp',
+      to: para,
+      type: 'text',
+      text: { body: texto },
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+    }
+  );
 }
 
 const PORT = process.env.PORT || 3000;
