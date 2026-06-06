@@ -11,6 +11,50 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 // Histórico de conversa por número (memória simples em memória RAM)
 const conversas = {};
 
+// Mapa de conversas no Chatwoot: número → conversation_id
+const chatwootConversas = {};
+
+// Configurações Chatwoot
+const CHATWOOT_URL = 'https://app.chatwoot.com';
+const CHATWOOT_ACCOUNT_ID = process.env.CHATWOOT_ACCOUNT_ID;
+const CHATWOOT_INBOX_ID = process.env.CHATWOOT_INBOX_ID;
+const CHATWOOT_TOKEN = process.env.CHATWOOT_TOKEN;
+
+async function chatwootEnviarMensagem(numeroWA, texto, tipo = 'outgoing') {
+  if (!CHATWOOT_TOKEN) return;
+  try {
+    let conversationId = chatwootConversas[numeroWA];
+
+    if (!conversationId) {
+      // Cria ou busca contato
+      const contatoRes = await axios.post(
+        `${CHATWOOT_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/contacts`,
+        { phone_number: '+' + numeroWA, name: numeroWA },
+        { headers: { api_access_token: CHATWOOT_TOKEN } }
+      );
+      const contactId = contatoRes.data.id;
+
+      // Cria conversa
+      const convRes = await axios.post(
+        `${CHATWOOT_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/contacts/${contactId}/conversations`,
+        { inbox_id: CHATWOOT_INBOX_ID },
+        { headers: { api_access_token: CHATWOOT_TOKEN } }
+      );
+      conversationId = convRes.data.id;
+      chatwootConversas[numeroWA] = conversationId;
+    }
+
+    // Envia mensagem na conversa
+    await axios.post(
+      `${CHATWOOT_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}/messages`,
+      { content: texto, message_type: tipo, private: false },
+      { headers: { api_access_token: CHATWOOT_TOKEN } }
+    );
+  } catch (err) {
+    console.error('Erro ao enviar para Chatwoot:', err.response?.data || err.message);
+  }
+}
+
 const SYSTEM_PROMPT = `Você é um assistente de vendas da NovaBeauty Sérum COD. Seu objetivo é atender leads que chegam pelo WhatsApp após clicar em anúncios no Instagram/Facebook e fechar o pedido com pagamento na entrega (COD).
 
 PRODUTO: Sérum Facial Novabeauty Revitalizante Natural Nutritivo (marca i9ser)
@@ -130,6 +174,9 @@ app.post('/webhook', async (req, res) => {
 
     console.log(`Mensagem de ${from}: ${texto}`);
 
+    // Espelha mensagem do cliente no Chatwoot
+    await chatwootEnviarMensagem(from, texto, 'incoming');
+
     // Inicializa histórico se não existir
     if (!conversas[from]) {
       conversas[from] = [];
@@ -163,6 +210,9 @@ app.post('/webhook', async (req, res) => {
 
     // Envia resposta pelo WhatsApp
     await enviarMensagem(from, resposta);
+
+    // Espelha resposta do agente no Chatwoot
+    await chatwootEnviarMensagem(from, '🤖 ' + resposta, 'outgoing');
 
   } catch (err) {
     console.error('Erro ao processar mensagem:', err.message);
