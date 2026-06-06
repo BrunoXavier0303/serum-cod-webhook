@@ -197,24 +197,10 @@ app.post('/logzz', async (req, res) => {
     const dados = req.body;
     console.log('Logzz webhook recebido:', JSON.stringify(dados));
 
-    // Pega o telefone do cliente (Logzz pode enviar em campos diferentes)
-    const telefone =
-      dados.customer_phone ||
-      dados.phone ||
-      dados.telefone ||
-      dados.cliente?.telefone ||
-      dados.cliente?.phone;
-
-    const status =
-      dados.status ||
-      dados.order_status ||
-      dados.situacao;
-
-    const nome =
-      dados.customer_name ||
-      dados.nome ||
-      dados.cliente?.nome ||
-      'cliente';
+    // Campos exatos da documentação Logzz
+    const telefone = dados.client_phone;
+    const status = dados.order_status;
+    const nome = dados.client_name || 'cliente';
 
     if (!telefone || !status) {
       console.log('Logzz: telefone ou status ausente', dados);
@@ -243,24 +229,45 @@ function gerarMensagemStatus(status, nome) {
   const s = status.toLowerCase();
   const primeiroNome = nome.split(' ')[0];
 
-  if (s.includes('confirmado') || s.includes('aprovado') || s.includes('pago')) {
-    return `✅ Olá, ${primeiroNome}! Seu pedido do Sérum NovaBeauty foi *confirmado* e já está sendo preparado para envio. Em breve você receberá o código de rastreio. 💚`;
+  // Status exatos da Logzz
+  if (s === 'confirmado') {
+    return `✅ Olá, ${primeiroNome}! Seu pedido do Sérum NovaBeauty foi *confirmado* e já está sendo preparado para envio. Em breve você receberá mais atualizações. 💚`;
   }
 
-  if (s.includes('rota') || s.includes('entrega') || s.includes('saiu') || s.includes('despachado') || s.includes('enviado')) {
-    return `🚚 ${primeiroNome}, seu Sérum NovaBeauty *saiu para entrega hoje*! Fique de olho, o entregador passará em breve. Lembre-se: o pagamento é feito na entrega. 😊`;
+  if (s === 'em separação') {
+    return `📦 ${primeiroNome}, seu Sérum NovaBeauty está sendo *separado no estoque* para envio. Logo logo sai pra você! 💚`;
   }
 
-  if (s.includes('entregue') || s.includes('concluido') || s.includes('concluído') || s.includes('finalizado')) {
+  if (s === 'a enviar' || s === 'enviando') {
+    return `🚀 ${primeiroNome}, seu Sérum NovaBeauty está *a caminho*! Em breve o entregador estará na sua porta. Lembre-se: pagamento na entrega. 😊`;
+  }
+
+  if (s === 'enviado' || s === 'em rota' || s === 'a caminho') {
+    return `🚚 ${primeiroNome}, seu Sérum NovaBeauty *saiu para entrega hoje*! Fique de olho, o entregador passará em breve. Pagamento só na entrega. 😊`;
+  }
+
+  if (s === 'completo') {
     return `🎉 ${primeiroNome}, seu Sérum NovaBeauty foi *entregue com sucesso*! Esperamos que você ame os resultados. Qualquer dúvida sobre como usar, é só chamar aqui. ✨`;
   }
 
-  if (s.includes('cancelado') || s.includes('cancelad')) {
+  if (s === 'cancelado') {
     return `⚠️ ${primeiroNome}, infelizmente seu pedido foi *cancelado*. Se quiser fazer um novo pedido ou tiver alguma dúvida, é só falar aqui com a gente! 💚`;
   }
 
-  if (s.includes('devolucao') || s.includes('devolução') || s.includes('devolvido') || s.includes('reembolso')) {
-    return `↩️ ${primeiroNome}, recebemos sua solicitação de devolução. Nossa equipe entrará em contato para concluir o processo. Qualquer dúvida, estamos aqui! 💚`;
+  if (s === 'frustrado') {
+    return `😕 ${primeiroNome}, não conseguimos realizar a entrega do seu pedido. Entre em contato para reagendarmos! 💚`;
+  }
+
+  if (s === 'reagendado' || s === 'a reagendar') {
+    return `📅 ${primeiroNome}, sua entrega foi *reagendada*. Fique atenta, o entregador voltará em breve! 💚`;
+  }
+
+  if (s === 'atrasado') {
+    return `⏰ ${primeiroNome}, seu pedido está com um pequeno *atraso*, mas já está a caminho! Pedimos desculpas pela demora. 💚`;
+  }
+
+  if (s === 'reembolsado') {
+    return `↩️ ${primeiroNome}, o *reembolso* do seu pedido foi processado. Qualquer dúvida, estamos aqui! 💚`;
   }
 
   return null; // Status sem mensagem configurada
